@@ -1,9 +1,9 @@
-use std::{io, iter};
+use std::{io, iter, time::Duration};
 
+use bluez_async::{uuid_from_u16, BluetoothSession, CharacteristicId};
 use freya::prelude::*;
-use gilrs::{Gilrs, Button, Event, EventType};
-use io_bluetooth::bt::{self, BtStream};
-use tokio::sync::mpsc::unbounded_channel;
+use gilrs::{Button, Event, EventType, Gilrs};
+use tokio::{sync::mpsc::unbounded_channel, time};
 
 fn main() {
     launch(app);
@@ -22,29 +22,28 @@ fn app(cx: Scope) -> Element {
     let moving_setter = moving.setter();
 
     use_effect(&cx, (), move |_| {
-        let sender =  event_handlers.0.clone();
-        let mut rx =  event_handlers.1.take().unwrap();
+        let sender = event_handlers.0.clone();
+        let mut rx = event_handlers.1.take().unwrap();
 
         async move {
             tokio::task::spawn_blocking(move || {
-
                 // CONTROLLER
                 let mut gilrs = Gilrs::new().unwrap();
-    
+
                 // Iterate over all connected gamepads
                 for (_id, gamepad) in gilrs.gamepads() {
                     println!("{} is {:?}", gamepad.name(), gamepad.power_info());
                 }
-            
+
                 let mut active_gamepad = None;
-            
+
                 loop {
                     // Examine new events
                     while let Some(event) = gilrs.next_event() {
                         sender.send(event).unwrap();
                         active_gamepad = Some(event.id);
                     }
-            
+
                     // You can also use cached gamepad state
                     if let Some(gamepad) = active_gamepad.map(|id| gilrs.gamepad(id)) {
                         if gamepad.is_pressed(Button::South) {
@@ -55,30 +54,33 @@ fn app(cx: Scope) -> Element {
             });
 
             // BLUETOOTH
-            let devices = bt::discover_devices().unwrap();
-            println!("Devices:");
-            for (idx, device) in devices.iter().enumerate() {
-                println!("{}: {}", idx, *device);
-            }
-        
-            if devices.len() == 0 {
-                panic!("No Bluetooth devices found.");
-            }
-        
-            let device_idx = request_device_idx(devices.len()).unwrap();
-        
-            let socket = BtStream::connect(iter::once(&devices[device_idx]), bt::BtProtocol::RFCOMM).unwrap();
-        
-            match socket.peer_addr() {
-                Ok(name) => println!("Peername: {}.", name.to_string()),
-                Err(err) => println!("An error occured while retrieving the peername: {:?}", err),
-            }
-        
-            match socket.local_addr() {
-                Ok(name) => println!("Socket name: {}", name.to_string()),
-                Err(err) => println!("An error occured while retrieving the sockname: {:?}", err),
-            }
+            let (_, session) = BluetoothSession::new().await.unwrap();
 
+            // Start scanning for Bluetooth devices, and wait a few seconds for some to be discovered.
+            session.start_discovery().await.unwrap();
+            time::sleep(Duration::from_secs(5)).await;
+            session.stop_discovery().await.unwrap();
+
+            // Get a list of devices which are currently known.
+            let devices = session.get_devices().await.unwrap();
+
+            // Find the device we care about.
+            let device = devices
+                .into_iter()
+                .find(|device| device.name.as_deref() == Some("HC-06"))
+                .unwrap();
+
+            // Connect to it.
+            session.connect(&device.id).await.unwrap();
+
+            let services = session.get_services(&device.id).await.unwrap();
+            println!("{:?}", services);
+
+            loop {
+                time::sleep(Duration::from_secs(1)).await;
+                //session.write_characteristic_value(&characteristic.id, [1,2,3]).await.unwrap();
+            }
+            /*
             while let Some(Event { id, event, time }) = rx.recv().await {
                 let data = format!("{:?} New event from {}: {:?}", time, id, event);
                 match event {
@@ -103,10 +105,9 @@ fn app(cx: Scope) -> Element {
                 }
                 println!("{data}");
                 event_setter(data);
-            }
+            } */
         }
     });
-
     let (txt, bg) = if *moving.get() {
         ("MOVING", "green")
     } else {
