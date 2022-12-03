@@ -84,11 +84,11 @@ fn app(cx: Scope) -> Element {
                 match event {
                     EventType::ButtonChanged(btn, _pressed, _code) => {
                         match btn {
-                            Button::LeftTrigger => {
+                            Button::DPadUp => {
                                 socket.send("F".as_bytes()).unwrap();
                                 moving_setter(true);
                             }
-                            Button::LeftTrigger2 => {
+                            Button::DPadDown => {
                                 socket.send("S".as_bytes()).unwrap();
                                 moving_setter(false);
                             }
