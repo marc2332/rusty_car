@@ -6,7 +6,7 @@ use io_bluetooth::bt::{self, BtStream};
 use tokio::sync::mpsc::unbounded_channel;
 
 fn main() {
-    launch(app);
+    launch_with_props(app, "Car", (700, 400));
 }
 
 fn app(cx: Scope) -> Element {
@@ -18,8 +18,8 @@ fn app(cx: Scope) -> Element {
     let event = use_state(&cx, String::new);
     let event_setter = event.setter();
 
-    let moving = use_state(&cx, || false);
-    let moving_setter = moving.setter();
+    let velocity = use_state(&cx, || 0.0);
+    let velocity_setter = velocity.setter();
 
     use_effect(&cx, (), move |_| {
         let sender =  event_handlers.0.clone();
@@ -84,21 +84,46 @@ fn app(cx: Scope) -> Element {
                 match event {
                     EventType::ButtonChanged(btn, _pressed, _code) => {
                         match btn {
+                            #[cfg(target_os = "linux")]
                             Button::DPadUp => {
-                                socket.send("F".as_bytes()).unwrap();
-                                moving_setter(true);
+                                socket.send(&[80]).unwrap();
+                                velocity_setter(80.0);
                             }
+                            #[cfg(target_os = "windows")]
+                            Button::LeftTrigger => {
+                                socket.send(&[80]).unwrap();
+                                velocity_setter(80.0);
+                            }
+
+                            #[cfg(target_os = "linux")]
                             Button::DPadDown => {
-                                socket.send("S".as_bytes()).unwrap();
-                                moving_setter(false);
+                                socket.send(&[0]).unwrap();
+                                velocity_setter(0.0);
+                            }
+                            #[cfg(target_os = "windows")]
+                            Button::LeftTrigger2 => {
+                                socket.send(&[0]).unwrap();
+                                velocity_setter(0.0);
                             }
                             _ => {
-                                println!("wrong button 1")
+                               
+                            }
+                        }
+                    }
+                    EventType::AxisChanged(btn, position, _code) => {
+                        match btn {
+                            gilrs::Axis::LeftStickY => {
+                                let percentage = position * 100.0;
+                                socket.send(&[percentage as u8]).unwrap();
+                                velocity_setter(percentage);
+                            }
+                            _ => {
+                               
                             }
                         }
                     }
                     _ => {
-                        println!("wrong button 0")
+                       
                     }
                 }
                 println!("{data}");
@@ -107,10 +132,12 @@ fn app(cx: Scope) -> Element {
         }
     });
 
-    let (txt, bg) = if *moving.get() {
-        ("MOVING", "green")
+    let is_moving = *velocity.get() > 0.0;
+
+    let (txt, bg) = if is_moving {
+        (format!("MOVING at {}%", velocity.get().ceil()), "green")
     } else {
-        ("STOPPED", "red")
+        ("STOPPED".to_string(), "red")
     };
 
     render!(
@@ -121,11 +148,30 @@ fn app(cx: Scope) -> Element {
             display: "center",
             direction: "both",
             background: "{bg}",
-            label {
-                color: "white",
-                font_size: "70",
-                font_style: "bold",
-                "{txt}"
+            rect {
+                width: "50%",
+                height: "50%",
+                label {
+                    width: "100%",
+                    color: "white",
+                    font_size: "70",
+                    font_style: "bold",
+                    align: "center",
+                    "{txt}"
+                }
+                if is_moving {
+                    rsx!(
+                        rect {
+                            width: "{velocity.get()}%",
+                            height: "50",
+                            background: "white"
+                        }
+                    )
+                } else {
+                    rsx!(
+                        rect { }
+                    )
+                }
             }
         }
     )
